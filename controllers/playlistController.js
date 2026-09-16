@@ -165,10 +165,7 @@ function deletePlaylist(req, res, next) {
       return res.status(404).json({ error: `Плейлист с id=${id} не найден` });
     }
 
-    res.status(200).json({
-      message: 'Плейлист успешно удалён',
-      data: playlist
-    });
+    res.status(204).send();
   } catch (error) {
     next(error);
   }
