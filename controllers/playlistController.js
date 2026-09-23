@@ -64,9 +64,9 @@ function validatePlaylistPayload(body, { partial = false } = {}) {
   return null;
 }
 
-function getPlaylists(req, res, next) {
+async function getPlaylists(req, res, next) {
   try {
-    const playlists = playlistModel.getAll();
+    const playlists = await playlistModel.getAll();
     res.status(200).json({
       count: playlists.length,
       data: playlists
@@ -76,14 +76,14 @@ function getPlaylists(req, res, next) {
   }
 }
 
-function getPlaylistById(req, res, next) {
+async function getPlaylistById(req, res, next) {
   try {
     const id = parseId(req.params.id);
     if (!id) {
       return res.status(400).json({ error: 'Некорректный ID плейлиста' });
     }
 
-    const playlist = playlistModel.getById(id);
+    const playlist = await playlistModel.getById(id);
     if (!playlist) {
       return res.status(404).json({ error: `Плейлист с id=${id} не найден` });
     }
@@ -94,14 +94,14 @@ function getPlaylistById(req, res, next) {
   }
 }
 
-function createPlaylist(req, res, next) {
+async function createPlaylist(req, res, next) {
   try {
     const validationError = validatePlaylistPayload(req.body);
     if (validationError) {
       return res.status(400).json({ error: validationError });
     }
 
-    const playlist = playlistModel.create({
+    const playlist = await playlistModel.create({
       title: req.body.title.trim(),
       description: req.body.description ? req.body.description.trim() : '',
       owner: req.body.owner.trim(),
@@ -119,7 +119,7 @@ function createPlaylist(req, res, next) {
   }
 }
 
-function updatePlaylist(req, res, next) {
+async function updatePlaylist(req, res, next) {
   try {
     const id = parseId(req.params.id);
     if (!id) {
@@ -131,7 +131,7 @@ function updatePlaylist(req, res, next) {
       return res.status(400).json({ error: validationError });
     }
 
-    const playlist = playlistModel.update(id, {
+    const playlist = await playlistModel.update(id, {
       title: req.body.title.trim(),
       description: req.body.description ? req.body.description.trim() : '',
       owner: req.body.owner.trim(),
@@ -153,14 +153,14 @@ function updatePlaylist(req, res, next) {
   }
 }
 
-function deletePlaylist(req, res, next) {
+async function deletePlaylist(req, res, next) {
   try {
     const id = parseId(req.params.id);
     if (!id) {
       return res.status(400).json({ error: 'Некорректный ID плейлиста' });
     }
 
-    const playlist = playlistModel.remove(id);
+    const playlist = await playlistModel.remove(id);
     if (!playlist) {
       return res.status(404).json({ error: `Плейлист с id=${id} не найден` });
     }

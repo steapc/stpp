@@ -1,5 +1,6 @@
 const express = require('express');
 const playlistRoutes = require('./routes/playlistRoutes');
+const sequelize = require('./db/database');
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -30,6 +31,18 @@ app.use((err, req, res, next) => {
   });
 });
 
-app.listen(port, () => {
-  console.log(`Server running on http://localhost:${port}`);
-});
+async function startServer() {
+  try {
+    await sequelize.authenticate();
+    app.listen(port, () => {
+      console.log(`Server running on http://localhost:${port}`);
+    });
+  } catch (error) {
+    console.error('Database connection failed:', error.message);
+    process.exitCode = 1;
+  }
+}
+
+startServer();
+
+module.exports = app;

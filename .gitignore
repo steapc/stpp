@@ -1,8 +1,11 @@
 node_modules/
 npm-debug.log*
 .env
+.env.*
 .DS_Store
 *.log
 .idea/
 .vscode/
 BEGINNER_GUIDE.md
+REPORT_POSTGRES_TEXT.md
+LAB_POSTGRES_GUIDE.md

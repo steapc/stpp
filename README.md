@@ -12,12 +12,16 @@ API предоставляет CRUD-операции для ресурса `/pla
 - полное обновление плейлиста;
 - удаление плейлиста.
 
-Данные хранятся в массиве в оперативной памяти. После перезапуска процесса возвращаются три стартовые записи. Постоянная база данных не используется.
+Данные хранятся в PostgreSQL через Sequelize. Схема создаётся миграциями, стартовые данные добавляются seed-файлом.
+
+Подробная инструкция: [LAB_POSTGRES_GUIDE.md](LAB_POSTGRES_GUIDE.md).
 
 ## Стек
 
 - Node.js;
 - Express 4;
+- PostgreSQL;
+- Sequelize;
 - JavaScript CommonJS;
 - JSON API;
 - nodemon для разработки.
@@ -28,7 +32,11 @@ API предоставляет CRUD-операции для ресурса `/pla
 server.js                         запуск Express и общие обработчики
 routes/playlistRoutes.js          маршруты API
 controllers/playlistController.js валидация и обработка запросов
-models/playlistModel.js           in-memory модель данных
+models/Playlist.js                Sequelize-модель таблицы playlists
+models/playlistModel.js           CRUD через Sequelize
+db/database.js                    подключение к PostgreSQL
+migrations/                       миграции схемы
+seeders/                          начальные данные
 package.json                      зависимости и команды запуска
 ```
 
@@ -36,6 +44,8 @@ package.json                      зависимости и команды за�
 
 ```powershell
 npm.cmd install
+npm.cmd run db:migrate
+npm.cmd run db:seed
 npm.cmd start
 ```
 
