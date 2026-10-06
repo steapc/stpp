@@ -15,7 +15,7 @@ API предоставляет CRUD-операции для ресурса `/pla
 Данные хранятся в PostgreSQL через Sequelize. Схема создаётся миграциями, стартовые данные добавляются seed-файлом.
 
 Подробная инструкция: [LAB_POSTGRES_GUIDE.md](LAB_POSTGRES_GUIDE.md).
-Инструкция по аутентификации и авторизации: [AUTH_LAB_GUIDE.md](AUTH_LAB_GUIDE.md).
+Инструкция по проверке регистрации, JWT и ролей в Postman: [POSTMAN_LAB3_GUIDE.md](POSTMAN_LAB3_GUIDE.md).
 
 ## Стек
 
