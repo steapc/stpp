@@ -15,6 +15,7 @@ API предоставляет CRUD-операции для ресурса `/pla
 Данные хранятся в PostgreSQL через Sequelize. Схема создаётся миграциями, стартовые данные добавляются seed-файлом.
 
 Подробная инструкция: [LAB_POSTGRES_GUIDE.md](LAB_POSTGRES_GUIDE.md).
+Инструкция по аутентификации и авторизации: [AUTH_LAB_GUIDE.md](AUTH_LAB_GUIDE.md).
 
 ## Стек
 
@@ -31,8 +32,11 @@ API предоставляет CRUD-операции для ресурса `/pla
 ```text
 server.js                         запуск Express и общие обработчики
 routes/playlistRoutes.js          маршруты API
+routes/authRoutes.js              маршруты регистрации и входа
 controllers/playlistController.js валидация и обработка запросов
 models/Playlist.js                Sequelize-модель таблицы playlists
+models/User.js                    Sequelize-модель пользователей
+middleware/                       проверка JWT и роли администратора
 models/playlistModel.js           CRUD через Sequelize
 db/database.js                    подключение к PostgreSQL
 migrations/                       миграции схемы
@@ -64,11 +68,14 @@ npm.cmd run dev
 | Метод | Маршрут | Успешный статус | Назначение |
 |---|---|---:|---|
 | GET | `/` | 200 | информация о проекте и API |
+| POST | `/auth/register` | 201 | регистрация пользователя |
+| POST | `/auth/login` | 200 | вход и получение JWT |
+| GET | `/profile` | 200 | профиль текущего пользователя (Bearer JWT) |
 | GET | `/playlists` | 200 | список плейлистов |
 | GET | `/playlists/:id` | 200 | плейлист по ID |
-| POST | `/playlists` | 201 | создание плейлиста |
-| PUT | `/playlists/:id` | 200 | полное обновление плейлиста |
-| DELETE | `/playlists/:id` | 204 | удаление без тела ответа |
+| POST | `/playlists` | 201 | создание плейлиста (роль `admin`) |
+| PUT | `/playlists/:id` | 200 | полное обновление плейлиста (роль `admin`) |
+| DELETE | `/playlists/:id` | 204 | удаление без тела ответа (роль `admin`) |
 
 Ошибки:
 
@@ -138,9 +145,11 @@ DELETE http://localhost:3000/playlists/4
 
 Ответ: `204 No Content` без тела.
 
-## Ограничения
+## Авторизация
 
-Текущая версия не содержит постоянного хранилища, авторизации, проверки прав пользователей и WebSocket-синхронизации. Проект реализует REST API предметной области; данные и счетчик ID существуют только во время работы процесса.
+Перед запуском необходимо задать `JWT_SECRET` в `.env` (случайная строка длиной не менее 32 байт). Пользователи и плейлисты хранятся в PostgreSQL. При регистрации назначается роль `user`; изменять данные плейлистов может только роль `admin`. Инструкция по настройке и примерам запросов приведена в [AUTH_LAB_GUIDE.md](AUTH_LAB_GUIDE.md).
+
+WebSocket-синхронизация в проекте не реализована.
 
 ## Репозиторий
 

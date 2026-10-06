@@ -1,6 +1,10 @@
 const express = require('express');
 const playlistRoutes = require('./routes/playlistRoutes');
+const authRoutes = require('./routes/authRoutes');
+const authController = require('./controllers/authController');
+const authenticate = require('./middleware/auth');
 const sequelize = require('./db/database');
+const { getJwtSecret } = require('./config/jwt');
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -11,11 +15,15 @@ app.get('/', (req, res) => {
   res.status(200).json({
     project: 'Платформа для совместного прослушивания музыки и создания плейлистов',
     api: {
-      playlists: '/playlists'
+      playlists: '/playlists',
+      auth: '/auth',
+      profile: '/profile'
     }
   });
 });
 
+app.use('/auth', authRoutes);
+app.get('/profile', authenticate, authController.getProfile);
 app.use('/playlists', playlistRoutes);
 
 app.use((req, res) => {
@@ -33,12 +41,13 @@ app.use((err, req, res, next) => {
 
 async function startServer() {
   try {
+    getJwtSecret();
     await sequelize.authenticate();
     app.listen(port, () => {
       console.log(`Server running on http://localhost:${port}`);
     });
   } catch (error) {
-    console.error('Database connection failed:', error.message);
+    console.error('Server startup failed:', error.message);
     process.exitCode = 1;
   }
 }
