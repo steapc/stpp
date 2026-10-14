@@ -5,7 +5,11 @@ npm-debug.log*
 .DS_Store
 *.log
 .idea/
-.vscode/
+.vscode/*
+!.vscode/settings.json
+LAB_POSTGRES_GUIDE.md
+AUTH_LAB_GUIDE.md
+POSTMAN_LAB3_GUIDE.md
+LAB4_GUIDE.md
 BEGINNER_GUIDE.md
 REPORT_POSTGRES_TEXT.md
-LAB_POSTGRES_GUIDE.md
