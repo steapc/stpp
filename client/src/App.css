@@ -136,6 +136,29 @@
   opacity: 0.6;
 }
 
+.auth-mode-toggle {
+  padding: 8px 0;
+  border: 0;
+  color: var(--green-dark);
+  background: transparent;
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.auth-mode-toggle:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
+.auth-notice {
+  margin: 12px 0 0;
+  color: #526b55;
+  font-size: 11px;
+}
+
 .session-active {
   align-items: center;
 }

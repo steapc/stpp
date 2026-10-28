@@ -22,6 +22,11 @@ export async function login(credentials) {
   return response.data
 }
 
+export async function register(credentials) {
+  const response = await api.post('/auth/register', credentials)
+  return response.data
+}
+
 export async function getProfile({ signal } = {}) {
   const response = await api.get('/profile', { signal })
   return response.data.user

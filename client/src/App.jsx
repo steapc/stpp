@@ -6,6 +6,7 @@ import {
   getPlaylists,
   getProfile,
   login,
+  register,
   updatePlaylist,
 } from './api'
 import './App.css'
@@ -70,6 +71,8 @@ function App() {
     () => Boolean(window.localStorage.getItem(TOKEN_KEY)),
   )
   const [authError, setAuthError] = useState('')
+  const [authNotice, setAuthNotice] = useState('')
+  const [authMode, setAuthMode] = useState('login')
   const [loginFields, setLoginFields] = useState({ email: '', password: '' })
   const [form, setForm] = useState(createEmptyForm())
 
@@ -184,24 +187,68 @@ function App() {
     setEditingId(null)
   }
 
-  async function handleLogin(event) {
+  async function handleAuthSubmit(event) {
     event.preventDefault()
+
+    if (
+      authMode === 'register' &&
+      loginFields.password !== loginFields.passwordConfirmation
+    ) {
+      setAuthError('Пароли не совпадают.')
+      return
+    }
+
     setAuthLoading(true)
     setAuthError('')
+    setAuthNotice('')
+    let accountCreated = false
 
     try {
-      const result = await login(loginFields)
+      if (authMode === 'register') {
+        await register({
+          email: loginFields.email,
+          password: loginFields.password,
+        })
+        accountCreated = true
+      }
+
+      const result = await login({
+        email: loginFields.email,
+        password: loginFields.password,
+      })
       if (!result.token) {
         throw new Error('Сервер не вернул JWT-токен')
       }
 
       window.localStorage.setItem(TOKEN_KEY, result.token)
       setToken(result.token)
-      setLoginFields((currentFields) => ({ ...currentFields, password: '' }))
+      setAuthMode('login')
+      setLoginFields((currentFields) => ({
+        ...currentFields,
+        password: '',
+        passwordConfirmation: '',
+      }))
+      if (accountCreated) {
+        setAuthNotice('Аккаунт создан, вход выполнен.')
+      }
     } catch (error) {
       setAuthError(getApiErrorMessage(error))
       setAuthLoading(false)
+      if (accountCreated) {
+        setAuthMode('login')
+        setAuthNotice('Аккаунт создан. Теперь войдите с указанными данными.')
+      }
     }
+  }
+
+  function toggleAuthMode() {
+    setAuthMode((mode) => mode === 'login' ? 'register' : 'login')
+    setAuthError('')
+    setAuthNotice('')
+    setLoginFields((currentFields) => ({
+      ...currentFields,
+      passwordConfirmation: '',
+    }))
   }
 
   function handleLogout() {
@@ -425,10 +472,14 @@ function App() {
             </button>
           </div>
         ) : (
-          <form className="login-form" onSubmit={handleLogin}>
+          <form className="login-form" onSubmit={handleAuthSubmit}>
             <div className="login-copy">
-              <p className="eyebrow">JWT-АВТОРИЗАЦИЯ</p>
-              <strong>Войдите, чтобы изменять плейлисты</strong>
+              <p className="eyebrow">УЧЁТНАЯ ЗАПИСЬ</p>
+              <strong>
+                {authMode === 'register'
+                  ? 'Создайте аккаунт'
+                  : 'Войдите, чтобы изменять плейлисты'}
+              </strong>
             </div>
             <label>
               <span>Email</span>
@@ -446,17 +497,45 @@ function App() {
               <input
                 type="password"
                 name="password"
-                autoComplete="current-password"
+                autoComplete={authMode === 'register' ? 'new-password' : 'current-password'}
+                minLength={authMode === 'register' ? 8 : undefined}
                 value={loginFields.password}
                 onChange={updateLoginFields}
                 required
               />
             </label>
+            {authMode === 'register' && (
+              <label>
+                <span>Повторите пароль</span>
+                <input
+                  type="password"
+                  name="passwordConfirmation"
+                  autoComplete="new-password"
+                  minLength={8}
+                  value={loginFields.passwordConfirmation || ''}
+                  onChange={updateLoginFields}
+                  required
+                />
+              </label>
+            )}
             <button className="secondary-button" type="submit" disabled={authLoading}>
-              {authLoading ? 'Вход…' : 'Войти'}
+              {authLoading
+                ? authMode === 'register' ? 'Создаём аккаунт…' : 'Вход…'
+                : authMode === 'register' ? 'Зарегистрироваться' : 'Войти'}
+            </button>
+            <button
+              className="auth-mode-toggle"
+              type="button"
+              onClick={toggleAuthMode}
+              disabled={authLoading}
+            >
+              {authMode === 'register'
+                ? 'Уже есть аккаунт? Войти'
+                : 'Нет аккаунта? Зарегистрироваться'}
             </button>
           </form>
         )}
+        {authNotice && <p className="auth-notice" role="status">{authNotice}</p>}
         {authError && <p className="request-error" role="alert">{authError}</p>}
       </section>
 
