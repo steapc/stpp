@@ -83,6 +83,7 @@ npm.cmd --prefix client run dev
 Полная инструкция по запуску двух терминалов, JWT-входу, правам администратора, API-файлам и проверке CRUD приведена в [LAB5_GUIDE.md](LAB5_GUIDE.md).
 Шаблон отчёта с разделами, листингами и 16 контрольными вопросами — [LAB5_REPORT.txt](LAB5_REPORT.txt).
 Пошаговая инструкция, как сделать скриншоты для отчёта и какие части кода ими подтверждаются, находится в [LAB5_SCREENSHOT_GUIDE.md](LAB5_SCREENSHOT_GUIDE.md).
+Объяснение кода для начинающего и подготовка к вопросам на защите — в [LAB5_BEGINNER_EXPLANATION.txt](LAB5_BEGINNER_EXPLANATION.txt).
 
 ## Маршруты
 

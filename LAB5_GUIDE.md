@@ -271,6 +271,9 @@ GET http://localhost:3000/playlists
 Подробные пошаговые инструкции для каждого скриншота и соответствующие участки
 кода приведены в [`LAB5_SCREENSHOT_GUIDE.md`](LAB5_SCREENSHOT_GUIDE.md).
 
+Для подробного объяснения React state/hooks, API-запросов, JWT и серверной
+цепочки для начинающего используй [`LAB5_BEGINNER_EXPLANATION.txt`](LAB5_BEGINNER_EXPLANATION.txt).
+
 ## 8. Проверка соответствия заданию
 
 - [x] Список получен серверным GET с состояниями загрузки/ошибки и повторным запросом.

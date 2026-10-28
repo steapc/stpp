@@ -1,0 +1,1004 @@
+ПОДГОТОВКА К ЗАЩИТЕ
+Лабораторная работа №5
+Понятное объяснение кода для начинающего
+
+Этот файл объясняет, как устроена интеграция React-клиента с REST API проекта.
+Он предназначен для изучения перед защитой и не заменяет исходный код.
+В листингах ниже показаны отдельные ключевые фрагменты; актуальную реализацию
+смотри в файлах, перечисленных в начале каждого раздела.
+
+ВАЖНО: переменные, состояния и функции ниже объясняются на русском словами,
+но имена в коде оставлены такими, как они объявлены в проекте. Если
+преподаватель спросит «откуда берётся значение», проследи цепочку:
+поле формы -> React state -> API-функция -> HTTP-запрос -> Express route ->
+controller -> Sequelize model -> PostgreSQL -> JSON-ответ -> setState -> JSX.
+
+
+0. КАРТА ПРОЕКТА
+
+client/src/main.jsx
+  Стартовая точка React. Создаёт корневой React-компонент и отображает App.
+
+client/src/App.jsx
+  Страница приложения: состояние, регистрация, вход, GET списка, формы,
+  оптимистические POST/PUT/DELETE, поиск, сортировка и JSX-интерфейс.
+
+client/src/api.js
+  Сервис Axios. Здесь описаны адрес API, JWT interceptor и функции
+  register/login/profile/playlists.
+
+client/src/App.css
+  Внешний вид страницы, формы, карточек, индикатора и адаптивной разметки.
+
+client/vite.config.js
+  Dev proxy: перенаправляет браузерные обращения /api на Express сервер.
+
+server.js
+  Запускает Express, JSON middleware, CORS, маршруты и подключение к БД.
+
+routes/playlistRoutes.js, routes/authRoutes.js
+  Сопоставляют HTTP-метод и URL с middleware и контроллером.
+
+controllers/playlistController.js, controllers/authController.js
+  Проверяют входные данные, вызывают модели и формируют HTTP-ответы.
+
+middleware/auth.js, middleware/isAdmin.js
+  Проверяют Bearer JWT и права администратора.
+
+models/Playlist.js, models/User.js
+  Описывают структуру таблиц для Sequelize.
+
+models/playlistModel.js, db/database.js
+  Выполняют операции с PostgreSQL через Sequelize и создают подключение.
+
+
+1. ОСНОВНЫЕ ПОНЯТИЯ
+
+React — библиотека JavaScript для построения интерфейса. Вместо того чтобы
+вручную менять DOM-элементы, мы храним данные в state. Когда state меняется,
+React повторно строит нужную часть интерфейса.
+
+Компонент — функция, которая возвращает JSX-разметку. В этом проекте главный
+компонент страницы называется App и объявлен в client/src/App.jsx:
+
+    function App() {
+      ...
+      return (<main>...</main>)
+    }
+
+JSX похож на HTML, но это синтаксис JavaScript. Внутри фигурных скобок `{...}`
+можно вставлять выражения JavaScript, например `{playlists.length}`.
+
+REST API — набор HTTP-маршрутов, через которые клиент работает с ресурсами:
+
+    GET    /playlists       получить список
+    POST   /playlists       создать запись
+    PUT    /playlists/:id   обновить запись
+    DELETE /playlists/:id   удалить запись
+    POST   /auth/register   создать учётную запись
+    POST   /auth/login      войти и получить JWT
+    GET    /profile         получить профиль по JWT
+
+PostgreSQL — настоящая база данных. React state — только текущее состояние
+страницы браузера; он сам ничего не записывает в PostgreSQL. Чтобы запись
+попала в базу, должен выполниться API-запрос, Express должен его принять,
+проверить права и сохранить данные с помощью Sequelize.
+
+HTTP-статусы, используемые API:
+
+    200 — запрос выполнен успешно;
+    201 — новая запись создана;
+    204 — запись удалена, тело ответа отсутствует;
+    400 — некорректные данные;
+    401 — не пройдена аутентификация (нет/неверный токен);
+    403 — пользователь вошёл, но не имеет нужной роли;
+    404 — ресурс или маршрут не найден;
+    409 — email уже зарегистрирован;
+    500 — ошибка сервера.
+
+
+2. ОТКУДА ЗАПУСКАЕТСЯ REACT
+
+Файл: client/src/main.jsx
+
+    import { StrictMode } from 'react'
+    import { createRoot } from 'react-dom/client'
+    import './index.css'
+    import App from './App.jsx'
+
+    createRoot(document.getElementById('root')).render(
+      <StrictMode>
+        <App />
+      </StrictMode>,
+    )
+
+Объяснение:
+
+1) `import` подключает код из других файлов или библиотек.
+2) `createRoot` берёт HTML-элемент с id `root` и создаёт в нём корень React.
+   Этот элемент объявлен в client/index.html как `<div id="root"></div>`.
+3) `App` импортирован из App.jsx и является главным компонентом страницы.
+4) `StrictMode` — инструмент разработки React для поиска проблем. В dev-режиме
+   некоторые эффекты могут запускаться по дополнительному циклу
+   setup -> cleanup -> setup. Это помогает выявлять эффекты без правильной
+   очистки. В production дополнительного диагностического цикла нет.
+5) `index.css` — общие CSS-стили страницы; `App.css` импортируется в App.jsx.
+
+Вопрос: почему в Network может быть два GET при разработке?
+Ответ: React StrictMode в dev проверяет корректность эффектов повторным
+монтированием/очисткой. Один из запросов может быть отменён через
+AbortController, другой завершается обычным ответом. Это не означает, что в
+PostgreSQL автоматически появились две записи: GET только читает список.
+
+
+3. API-СЕРВИС AXIOS
+
+Файл: client/src/api.js
+
+3.1 Импорт и константа
+
+    import axios from 'axios'
+    const TOKEN_KEY = 'stpp-auth-token'
+
+`axios` — установленная npm-библиотека для HTTP. TOKEN_KEY — название ключа,
+под которым JWT хранится в localStorage браузера. Одна константа используется
+и при сохранении/удалении в App.jsx, и при чтении в API interceptor, чтобы
+название ключа не расходилось.
+
+3.2 Создание клиента Axios
+
+    const api = axios.create({
+      baseURL: import.meta.env.VITE_API_URL || '/api',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    })
+
+`axios.create` создаёт настроенный экземпляр Axios.
+`baseURL` — общий префикс URL для запросов.
+`import.meta.env.VITE_API_URL` — переменная Vite, если она задана в client/.env.
+`|| '/api'` — значение по умолчанию, когда переменной нет.
+В обычном локальном запуске браузер обращается к `/api/playlists`, а Vite
+перенаправляет этот адрес на сервер.
+`Content-Type: application/json` говорит серверу, что тело POST/PUT — JSON.
+
+3.3 Request interceptor: автоматический заголовок JWT
+
+    api.interceptors.request.use((config) => {
+      const token = window.localStorage.getItem(TOKEN_KEY)
+      if (token) {
+        config.headers.Authorization = `Bearer ${token}`
+      }
+      return config
+    })
+
+Interceptor — функция-перехватчик, которая выполняется перед каждым запросом
+через `api`. Она читает токен из localStorage. Если токен существует, добавляет
+заголовок `Authorization: Bearer <значение токена>`. Затем обязательно
+возвращает config, чтобы Axios продолжил отправку.
+
+Важно: interceptor не проверяет, настоящий ли токен. Проверка подписи,
+срока действия и пользователя выполняется сервером в middleware/auth.js.
+localStorage не защищён от любого вредоносного JavaScript на странице, поэтому
+в настоящих приложениях дополнительно защищают страницу от XSS и оценивают
+вариант HttpOnly cookies.
+
+3.4 Функции API
+
+    export async function login(credentials) {
+      const response = await api.post('/auth/login', credentials)
+      return response.data
+    }
+
+    export async function register(credentials) {
+      const response = await api.post('/auth/register', credentials)
+      return response.data
+    }
+
+`export` позволяет импортировать функцию в App.jsx.
+`async` означает, что функция возвращает Promise и может использовать `await`.
+`credentials` — объект, который App передал из полей формы, например
+`{ email, password }`.
+`api.post` отправляет HTTP POST к `baseURL + '/auth/login'` или `/auth/register`.
+Axios сериализует JS-объект в JSON.
+`response` — объект ответа Axios: в нём есть status, headers и data.
+`response.data` — JSON-тело ответа Express.
+
+Остальные API-функции:
+
+    export async function getProfile({ signal } = {}) {
+      const response = await api.get('/profile', { signal })
+      return response.data.user
+    }
+
+    export async function getPlaylists({ signal } = {}) {
+      const response = await api.get('/playlists', { signal })
+      return response.data.data
+    }
+
+    export async function createPlaylist(playlist) {
+      const response = await api.post('/playlists', playlist)
+      return response.data.data
+    }
+
+    export async function updatePlaylist(id, playlist) {
+      const response = await api.put(`/playlists/${id}`, playlist)
+      return response.data.data
+    }
+
+    export async function deletePlaylist(id) {
+      await api.delete(`/playlists/${id}`)
+    }
+
+`api.get/post/put/delete` — методы HTTP. `id` берётся из объекта плейлиста и
+вставляется в адрес, например `/playlists/12`.
+`signal` — необязательный сигнал AbortController. Синтаксис
+`{ signal } = {}` позволяет вызвать функцию без параметра: `getPlaylists()`.
+Для GET response.data.data — массив, потому что сервер отвечает
+`{ count, data: [...] }`.
+Для profile response.data.user — объект профиля.
+Для POST/PUT response.data.data — сохранённый сервером объект.
+DELETE отвечает 204 без тела, поэтому результат не извлекается.
+
+3.5 Преобразование ошибки к тексту
+
+    export function getApiErrorMessage(error) {
+      if (axios.isAxiosError(error)) {
+        return error.response?.data?.error ||
+          error.message ||
+          'Ошибка запроса к серверу'
+      }
+      return error instanceof Error ? error.message : 'Неизвестная ошибка'
+    }
+
+Функция выбирает полезное сообщение для интерфейса.
+`axios.isAxiosError` проверяет, что ошибка пришла от Axios.
+`error.response?.data?.error` безопасно читает `error` из JSON, если HTTP-ответ
+вообще получен. Знак `?.` не вызывает ошибку, если промежуточного значения нет.
+Например, при серверном 403 Express может вернуть `{ "error": "..." }`.
+При отключённом сервере response может отсутствовать, тогда берётся
+`error.message`.
+
+
+4. СОСТОЯНИЕ APP И REACT HOOKS
+
+Файл: client/src/App.jsx
+
+`useState` — React Hook для данных, которые меняются и должны обновлять экран.
+Вызов `const [value, setValue] = useState(initial)` даёт:
+`value` — текущее значение; `setValue` — функцию обновления; `initial` —
+начальное значение.
+
+Состояния App:
+
+    playlists       массив плейлистов с API;
+    isLoading       выполняется ли первоначальная загрузка списка;
+    loadError       сообщение ошибки загрузки списка или пустая строка;
+    loadVersion     счётчик для повторного запуска эффекта GET;
+    actionMessage   результат действия с плейлистом;
+    isMutating      блокирует параллельные POST/PUT/DELETE в UI;
+    query           текст локального поиска;
+    sortOrder       режим сортировки;
+    editingId       ID плейлиста в режиме редактирования или null;
+    token           JWT, синхронизируемый с localStorage;
+    user            профиль с сервера, в том числе email и role;
+    authLoading     выполняется ли вход/проверка профиля;
+    authError       ошибка входа/регистрации/профиля;
+    authNotice      информационное сообщение авторизации;
+    authMode        'login' или 'register';
+    loginFields     значения полей email/password/confirmation;
+    form            значения формы плейлиста.
+
+Начальное значение `playlists` равно `[]`, то есть пустой список до ответа API.
+Начальное значение `isLoading` равно `true`, поэтому показывается индикатор.
+Ошибки начинаются пустой строкой: `''` означает, что ошибки нет.
+`editingId` сначала `null`: форма не редактирует существующую запись.
+
+`useMemo` запоминает результат вычисления между отрисовками:
+
+    const visiblePlaylists = useMemo(() => {
+      // фильтрация и сортировка playlists
+    }, [playlists, query, sortOrder])
+
+Функция пересчитывается, если поменялся список, строка поиска или направление
+сортировки. Это клиентская фильтрация: она не вызывает API и не меняет БД.
+
+
+5. ПОЛЕЗНЫЕ ФУНКЦИИ APP
+
+5.1 createTemporaryId
+
+    function createTemporaryId() {
+      return `temporary-${globalThis.crypto?.randomUUID?.() || Date.now()}`
+    }
+
+POST ещё не завершился, значит реального ID из БД пока нет. Для временного
+объекта используется строковый ID с префиксом `temporary-`. Предпочтительно
+генерируется случайный UUID браузера. Если crypto.randomUUID недоступен,
+используется текущее время `Date.now()`.
+После успешного ответа временный ID удаляется вместе с временным объектом,
+который заменяется полным объектом сервера с числовым ID из PostgreSQL.
+
+5.2 Разбор текста треков: tracksFromText
+
+В форме каждый трек вводится отдельной строкой:
+
+    Blue Hour — Jazz Collective
+
+Функция делает следующее:
+
+1) `.split('\n')` делит текст на строки.
+2) `.map(line => line.trim())` удаляет пробелы по краям.
+3) `.filter(Boolean)` выбрасывает пустые строки.
+4) регулярное выражение `/\s+[—–-]\s+/` ищет разделитель: длинное тире,
+   короткое тире или дефис с пробелами по бокам.
+5) Левая часть становится `title`, правая — `artist`.
+6) Если разделителя нет, вся строка считается названием, а artist становится
+   «Неизвестный исполнитель».
+7) Последний filter удаляет записи без title или artist.
+
+Итог — массив объектов, который сервер ожидает в виде
+`[{ title, artist }, ...]`, а не массив строк.
+
+5.3 tracksToText
+
+Обратная функция для редактирования: получает серверный массив объектов
+треков, создаёт для каждого строку `название — исполнитель` и объединяет
+строки через `\n`, чтобы их можно было снова показать в textarea.
+
+5.4 createEmptyForm
+
+Создаёт новый объект формы со значениями по умолчанию:
+
+    {
+      title: '',
+      description: '',
+      owner,
+      isPublic: true,
+      tracksText: '',
+    }
+
+Аргумент `owner` необязательный; если не передан, используется пустая строка.
+`isPublic: true` означает, что новый плейлист по умолчанию публичный.
+
+
+6. USEEFFECT: ЗАГРУЗКА СПИСКА
+
+`useEffect` запускает побочный эффект после отображения React-компонента.
+HTTP-запрос является побочным эффектом, потому что он взаимодействует с
+внешней системой (сервером).
+
+В App эффект списка зависит от `[loadVersion]`. При первом монтировании
+loadVersion равен 0, поэтому GET запускается. Когда пользователь нажимает
+«Повторить запрос», loadVersion увеличивается и эффект запускается ещё раз.
+
+    useEffect(() => {
+      const controller = new AbortController()
+      let isActive = true
+
+      getPlaylists({ signal: controller.signal })
+        .then((data) => {
+          if (isActive) setPlaylists(data)
+        })
+        .catch((error) => {
+          if (isActive && error.name !== 'CanceledError') {
+            setLoadError(getApiErrorMessage(error))
+          }
+        })
+        .finally(() => {
+          if (isActive) setIsLoading(false)
+        })
+
+      return () => {
+        isActive = false
+        controller.abort()
+      }
+    }, [loadVersion])
+
+Построчно:
+
+`new AbortController()` создаёт контроллер отмены.
+`controller.signal` передаётся через getPlaylists в Axios.
+`.then` вызывается при успешном HTTP-ответе. `data` — уже извлечённый массив.
+`isActive` проверяет, что эффект ещё актуален.
+`.catch` вызывается при HTTP/сетевой ошибке.
+`CanceledError` — имя ошибки отмены Axios; её не показывают как ошибку сервера.
+`getApiErrorMessage` преобразует техническую ошибку в текст.
+`.finally` выполняется и после успеха, и после ошибки, чтобы снять индикатор.
+Возвращаемая из useEffect функция — cleanup.
+В cleanup флаг выключается и текущий GET отменяется.
+
+Почему есть и AbortController, и `isActive`?
+AbortController просит Axios/браузер прекратить запрос. `isActive` — отдельная
+защита от позднего результата, если запрос уже успел завершиться или отмена
+обрабатывается не мгновенно. Ни один результат старого эффекта тогда не
+обновит state.
+
+Повтор GET:
+
+    function retryLoading() {
+      setIsLoading(true)
+      setLoadError('')
+      setLoadVersion((version) => version + 1)
+    }
+
+Первый setter сразу возвращает интерфейс в режим загрузки. Ошибка очищается.
+Функциональная форма `setLoadVersion(version => version + 1)` использует
+актуальное предыдущее значение и инициирует новый эффект.
+
+
+7. USEEFFECT: ПРОВЕРКА ПРОФИЛЯ
+
+Второй эффект зависит от `[token]`. Когда токен пустой, профиль не запрашивается.
+После входа `setToken(result.token)` меняет token, поэтому эффект отправляет
+`GET /profile`. При успешном ответе профиль записывается в state `user`.
+
+Профиль берётся не из недоверенного UI или формы: Express проверяет токен и
+читает пользователя из таблицы users. Роль поступает с сервера.
+
+Если профиль не удалось загрузить и это не отмена:
+
+1) JWT удаляется из localStorage;
+2) token и user очищаются;
+3) authError показывает причину.
+
+Это защищает UI от использования недействительного или просроченного токена.
+Срок JWT в серверном authController равен одному часу.
+
+Третий эффект меняет `document.title` по количеству плейлистов. Он зависит
+от `[playlists.length]` и меняет только заголовок вкладки браузера.
+
+
+8. РЕГИСТРАЦИЯ, ВХОД И ВЫХОД
+
+Функция updateLoginFields получает браузерное событие `event`. У элемента
+формы есть атрибут `name` и текущее значение `value`. Она обновляет объект
+loginFields только для изменённого поля:
+
+    const { name, value } = event.target
+    setLoginFields((currentFields) => ({
+      ...currentFields,
+      [name]: value,
+    }))
+
+`...currentFields` — копирование остальных полей объекта. React state нельзя
+изменять непосредственно, поэтому создаётся новый объект.
+
+`handleAuthSubmit(event)`:
+
+1) `event.preventDefault()` не даёт браузеру перезагрузить страницу при submit.
+2) Если режим регистрации, сравнивает пароль и подтверждение.
+3) Включает authLoading и очищает старые сообщения.
+4) Если authMode равен `register`, вызывает `register({ email, password })`.
+5) После регистрации вызывает `login({ email, password })`.
+6) Проверяет, что сервер вернул `result.token`.
+7) Сохраняет JWT в `localStorage` и меняет React state token.
+8) Эффект token запрашивает /profile и показывает роль.
+9) Если возникла ошибка, catch сохраняет сообщение в authError.
+
+Регистрация не назначает роль admin. Серверный контроллер регистрации явно
+создаёт пользователя с ролью `user`. Роль администратора нельзя получить
+через форму сайта.
+
+`toggleAuthMode` переключает режим между `login` и `register`, убирает старые
+ошибки и очищает только confirmation field. Пароль остаётся в state, пока
+пользователь переключает режим, чтобы не терять введённые данные формы.
+
+`handleLogout` удаляет ключ TOKEN_KEY из localStorage, очищает token и user
+в React state и показывает уведомление. Удаление token state запускает cleanup
+профильного эффекта и отменяет запрос, если он ещё идёт.
+
+Обработка ошибок регистрации:
+сервер может ответить `409`, если email уже занят; `400`, если email неверный
+или пароль не соответствует длине. Текст ответа приходит в
+`response.data.error` и показывается в authError.
+
+
+9. ПОЛУЧЕНИЕ ДАННЫХ И JSX
+
+`return (...)` внутри App описывает DOM-представление.
+`className` используется вместо HTML `class`, потому что JSX — JavaScript.
+`onClick`, `onSubmit`, `onChange` подключают функции-обработчики.
+`value={...}` делает поле контролируемым: значение отображается из React state.
+`required`, `type="email"`, `minLength` используют браузерную проверку формы.
+Эти ограничения удобны для пользователя, но сервер всё равно проверяет
+входные данные независимо.
+
+Условие:
+
+    {user ? (...) : (...)}
+
+Если профиль существует, показываются email, роль и кнопка «Выйти». Иначе —
+форма входа/регистрации.
+
+Условие списка:
+
+    isLoading ? spinner
+      : loadError ? error and retry
+      : visiblePlaylists.length === 0 ? empty state
+      : playlist cards
+
+Это гарантирует, что в один момент отображается правильное состояние.
+
+`visiblePlaylists.map((playlist) => ...)` создаёт JSX-карточку на каждый
+объект массива. `key={playlist.id}` помогает React сопоставлять карточки при
+изменении списка. Для временного объекта key может быть строковым временным
+ID; после ответа сервера key становится ID из БД.
+
+Форма плейлиста controlled:
+`value={form.title}` получает название из state.
+`onChange={updateForm}` обновляет state при наборе.
+`name="title"` говорит updateForm, какое поле менять.
+`required` не даёт отправить пустое обязательное значение через обычный браузер.
+Для checkbox значение нужно брать из `event.target.checked`, а не из `value`.
+
+В JSX форма по `onSubmit` вызывает `submitForm`. Кнопка содержит `type="submit"`,
+поэтому нажатием отправляет форму. Внутри submitForm `preventDefault`
+предотвращает перезагрузку страницы.
+
+
+10. СОЗДАНИЕ ПЛЕЙЛИСТА И ОПТИМИСТИЧЕСКОЕ ОБНОВЛЕНИЕ
+
+Оптимистическое обновление — показать ожидаемый результат до ответа API.
+Это создаёт ощущение быстроты. Но React state не является базой: POST всё
+равно отправляется, а при отказе предварительное изменение откатывается.
+
+10.1 Проверки перед запросом
+
+submitForm проверяет:
+
+1) `isMutating`: если уже выполняется CRUD, не запускает параллельное действие.
+2) `title` и `owner`: удаляет пробелы `.trim()` и требует непустые значения.
+3) наличие `token`: если пользователь не вошёл, запрос не запускается.
+
+Серверные проверки всё равно остаются необходимыми: клиентские проверки
+можно обойти или запрос можно отправить вне браузера.
+
+10.2 Подготовка JSON-объекта
+
+    const playlistData = {
+      title,
+      description: form.description.trim(),
+      owner,
+      isPublic: form.isPublic,
+      tracks: tracksFromText(form.tracksText),
+      listenersOnline: ...,
+    }
+
+Это объект JavaScript, который Axios сериализует в JSON.
+title, owner, description приходят из полей формы.
+isPublic — boolean из checkbox.
+tracks — массив объектов, созданный tracksFromText.
+listenersOnline при редактировании берётся из текущего серверного объекта;
+при создании устанавливается в 0.
+
+10.3 Ветка редактирования
+
+Если editingId есть, App находит исходный объект previousPlaylist. Затем
+обновляет отображение сразу через setPlaylists, сохраняя исходную карточку
+для возможного отката. Функция updatePlaylist отправляет PUT.
+
+При успехе серверный объект заменяет оптимистический. При ошибке исходный
+previousPlaylist возвращается в список и выводится причина. `finally`
+вызывается всегда и снимает `isMutating`.
+
+Почему серверный ответ важнее локального объекта?
+Сервер может присвоить timestamps, ID и применить свои нормализации. Нужно
+показать подтверждённую серверную запись, а не только предположение клиента.
+
+10.4 Ветка создания
+
+Создаётся temporaryId, строится temporaryPlaylist, после чего она вставляется
+в начало React state. Затем `createPlaylist(playlistData)` делает POST.
+
+Успех: в массиве ищется объект с temporaryId, он заменяется savedPlaylist из
+response.data.data. Реальный объект включает ID БД и timestamps.
+
+Ошибка: временный объект с temporaryId фильтруется из массива, сообщение
+попадает в actionMessage. В базе запись не создана, если сервер отклонил POST.
+
+Пример HTTP тела:
+
+    {
+      "title": "Вечерний джаз",
+      "description": "Спокойные композиции",
+      "owner": "student@example.com",
+      "isPublic": true,
+      "tracks": [
+        { "title": "Blue Hour", "artist": "Jazz Collective" }
+      ],
+      "listenersOnline": 0
+    }
+
+
+11. РЕДАКТИРОВАНИЕ И УДАЛЕНИЕ
+
+`editPlaylist(playlist)`:
+получает объект из карточки, записывает ID в editingId, копирует серверные
+поля в form и преобразует tracks из массива в текст. После этого фокусируется
+на поле названия. При submit наличие editingId выбирает ветку PUT.
+
+`resetForm()` создаёт пустую форму, подставляя email вошедшего пользователя
+как owner, если он есть, и сбрасывает editingId в null.
+
+`removePlaylist(playlistId)`:
+
+1) проверяет, что другая мутация не выполняется;
+2) находит объект и индекс до удаления;
+3) проверяет токен;
+4) удаляет объект из React state сразу;
+5) вызывает DELETE;
+6) при успехе показывает сообщение;
+7) при ошибке добавляет исходный объект обратно в прежний индекс;
+8) finally снимает блокировку.
+
+Нужно удалять только тестовую запись. HTTP DELETE меняет PostgreSQL после
+проверки RBAC. Это не просто скрытие карточки: серверный controller вызывает
+модель, а модель выполняет DELETE/DESTROY в БД.
+
+
+12. ПОИСК И СОРТИРОВКА
+
+`query` хранит поисковую строку. `sortOrder` хранит режим:
+`newest` или `title`.
+
+`visiblePlaylists` сначала нормализует запрос через trim и lowercase, строит
+строку поиска из title, description, owner и названий/исполнителей треков,
+затем оставляет записи, содержащие запрос.
+
+Сортировка:
+если sortOrder равен `title`, сравниваются названия через localeCompare для
+русской локали. Иначе сравнивается createdAt в порядке от более нового к
+старому. Используется `[...filtered].sort`, чтобы не сортировать исходный
+массив state на месте.
+
+Поиск и сортировка локальные. Они не отправляют параметр search в сервер и
+не меняют БД. Их можно отличить от server-side search тем, что HTTP Network
+не показывает новый запрос при вводе.
+
+
+13. CSS: ИНДИКАТОР И ВИД
+
+Файл: client/src/App.css
+
+CSS отвечает за внешний вид, не за сетевую логику.
+`.loading-state` располагает текст и spinner в строку и выравнивает их.
+`.loading-spinner` задаёт круг, границу и точку начала анимации.
+`@keyframes loading-spin` вращает круг до 360 градусов.
+`animation: loading-spin 700ms linear infinite` запускает непрерывную
+равномерную анимацию длительностью 700 миллисекунд.
+
+Другие добавленные классы:
+
+`.session-panel` — панель учётной записи.
+`.login-form` — поля входа/регистрации.
+`.secondary-button` — вторичная кнопка формы и повтора.
+`.auth-mode-toggle` — переключатель вход/регистрация.
+`.auth-notice`, `.request-error` — статус и сообщение ошибки.
+`.checkbox-label` — подпись checkbox публичности.
+`:disabled` — визуально показывает заблокированную кнопку.
+`@media` — меняет размещение элементов на узком экране.
+
+Вопрос: какой код запускает анимацию спиннера?
+Ответ: React отображает `<span className="loading-spinner">`, пока isLoading
+истинен. CSS-класс задаёт `animation`, а `@keyframes` описывает вращение.
+
+
+14. VITE PROXY И ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ
+
+Файл: client/vite.config.js
+
+    export default defineConfig(({ mode }) => {
+      const env = loadEnv(mode, process.cwd(), '')
+      return {
+        plugins: [react()],
+        server: {
+          proxy: {
+            '/api': {
+              target: env.VITE_SERVER_URL || 'http://localhost:3000',
+              changeOrigin: true,
+              rewrite: (path) => path.replace(/^\/api/, ''),
+            },
+          },
+        },
+      }
+    })
+
+`defineConfig` — helper Vite для конфигурации.
+`mode` — режим, например development.
+`loadEnv` читает .env, `process.cwd()` — папка client, откуда запущен Vite.
+`plugins: [react()]` включает поддержку React/JSX.
+`server.proxy['/api']` говорит Vite перенаправить запросы, начинающиеся с /api.
+`target` — backend server; берётся из VITE_SERVER_URL или localhost:3000.
+`changeOrigin` меняет заголовок Host на целевой адрес.
+`rewrite` убирает префикс `/api`: браузерский `/api/playlists` становится
+серверным `/playlists`, потому что Express использует именно этот маршрут.
+
+Proxy — настройка dev-сервера Vite. В production нужен reverse proxy или
+реальный VITE_API_URL и корректная CORS-настройка. `.env` не следует включать
+в Git, если там есть секреты. В клиентский VITE_ env нельзя помещать секретный
+ключ: значения, доступные Vite-клиенту, могут попасть в браузерный bundle.
+
+
+15. EXPRESS И CORS
+
+Файл: server.js
+
+`require('express')`, `require('cors')` и другие require подключают npm-модули
+или локальные файлы Node.js.
+`app = express()` создаёт сервер Express.
+`app.use(express.json())` читает JSON request body и записывает разобранное
+содержимое в req.body.
+
+CORS — правила браузера о том, можно ли веб-странице с одного origin обращаться
+к серверу с другого origin. Origin состоит из scheme, host и port. Например,
+http://localhost:5173 и http://localhost:3000 — разные origin, потому что
+порты отличаются.
+
+Сервер разрешает по умолчанию localhost:5173 и 127.0.0.1:5173. Список можно
+переопределить CLIENT_ORIGIN через запятую. Разрешены методы GET, POST, PUT,
+DELETE, OPTIONS и заголовки Content-Type и Authorization.
+
+В dev режиме proxy обычно делает браузерный запрос на тот же origin Vite,
+затем Vite проксирует его серверу. CORS дополнительно нужен при прямом
+подключении с другого origin.
+
+Порядок маршрутов:
+
+    app.use('/auth', authRoutes)
+    app.get('/profile', authenticate, authController.getProfile)
+    app.use('/playlists', playlistRoutes)
+
+`app.use('/auth', authRoutes)` соединяет prefix /auth с маршрутами
+/register и /login из authRoutes.js.
+Профиль сначала проходит authenticate, затем controller.
+Все playlist маршруты подключены под /playlists.
+
+`startServer` проверяет наличие валидного JWT_SECRET, вызывает
+`sequelize.authenticate()` для проверки соединения с PostgreSQL, а затем
+открывает HTTP-порт. Если стартовая проверка падает, ошибка выводится в
+терминал и сервер не считается успешно запущенным.
+
+
+16. BACKEND: МАРШРУТ -> MIDDLEWARE -> CONTROLLER -> MODEL
+
+Файл: routes/playlistRoutes.js
+
+    router.get('/', playlistController.getPlaylists)
+    router.get('/:id', playlistController.getPlaylistById)
+    router.post('/', authenticate, isAdmin, playlistController.createPlaylist)
+    router.put('/:id', authenticate, isAdmin, playlistController.updatePlaylist)
+    router.delete('/:id', authenticate, isAdmin, playlistController.deletePlaylist)
+
+`router` — объект маршрутов Express.
+`:id` — параметр пути, доступный как `req.params.id`.
+GET публичный.
+POST/PUT/DELETE последовательно проходят authenticate и isAdmin, только после
+успеха запускается controller.
+Если пользователь не вошёл, authenticate отвечает 401.
+Если вошёл, но роль не admin, isAdmin отвечает 403.
+
+Файл: middleware/auth.js
+
+1) Читает HTTP заголовок Authorization.
+2) Проверяет форму `Bearer <token>`.
+3) Получает секрет из серверного окружения.
+4) `jwt.verify` проверяет подпись и срок действия.
+5) Берёт ID из проверенного payload.
+6) Загружает User из базы `User.findByPk`.
+7) Прикрепляет к `req.user` id, email и актуальную role из БД.
+8) Вызывает `next()`, чтобы перейти к следующему middleware.
+
+Роль берётся из БД при каждом защищённом запросе, а не доверяется роли,
+которую клиент прислал бы в JSON. Поэтому изменение роли в БД действует на
+следующих запросах, даже если у пользователя ещё действующий JWT.
+
+Файл: middleware/isAdmin.js
+
+Проверяет `req.user.role`. Если это не admin, возвращает 403; иначе вызывает
+`next()` и разрешает дальнейшую обработку.
+
+Файл: controllers/playlistController.js
+
+Controller — слой обработки запроса. Например, `getPlaylists` вызывает
+`playlistModel.getAll()`, затем отправляет `200` и JSON `{ count, data }`.
+`createPlaylist` валидирует `req.body`; при ошибке отвечает 400, при успехе
+вызывает модель и возвращает 201 с созданной записью.
+`updatePlaylist` проверяет ID и поля, обновляет запись и отвечает 200.
+`deletePlaylist` проверяет ID, вызывает удаление и отвечает 204 без тела.
+`try/catch` передаёт серверную ошибку в Express через `next(error)`.
+
+Файл: models/playlistModel.js
+
+Model/repository вызывает Sequelize:
+`Playlist.findAll` читает список;
+`Playlist.findByPk` находит запись по ID;
+`Playlist.create` вставляет новую строку;
+`Playlist.update` обновляет;
+`Playlist.destroy` удаляет.
+`serialize` переводит Sequelize model instance в обычный JSON через `toJSON`.
+
+Файл: models/Playlist.js
+
+`sequelize.define` связывает поля JavaScript-модели с таблицей PostgreSQL
+`playlists`. `id` — integer autoIncrement primary key. title и owner обязательны.
+description имеет строковое значение по умолчанию. isPublic — boolean.
+tracks хранится как JSONB массив объектов. createdAt/updatedAt создаются
+Sequelize, потому что timestamps включены.
+
+Вывод: именно controller -> model -> Sequelize выполняет постоянную запись.
+`setPlaylists` в React только меняет картинку/состояние браузера; POST приводит
+к фактическому INSERT в PostgreSQL.
+
+
+17. РЕГИСТРАЦИЯ, BCRYPT И JWT НА СЕРВЕРЕ
+
+Файл: controllers/authController.js
+
+register:
+
+1) Получает email и password из `req.body`.
+2) Проверяет тип и формат email.
+3) Проверяет длину пароля: минимум 8 символов и максимум 72 байта для bcrypt.
+4) Нормализует email: trim и lowercase.
+5) Проверяет уникальность через User.findOne.
+6) Хеширует пароль `bcrypt.hash(password, 10)`.
+   10 — cost factor (число раундов/сложность bcrypt), это не длина пароля.
+7) Создаёт пользователя с ролью `user`.
+8) Возвращает 201 и безопасные поля id/email/role, не возвращает пароль или hash.
+
+login:
+
+1) Ищет пользователя по нормализованному email.
+2) `bcrypt.compare` сравнивает введённый пароль с хешем в БД.
+3) При совпадении `jwt.sign` подписывает payload `{ id, email }` серверным
+   JWT_SECRET со сроком `1h`.
+4) Возвращает JWT клиенту.
+
+JWT обычно содержит header, payload и signature. Payload подписан, но сам по
+себе не зашифрован. Поэтому не следует помещать в него пароль или секретные
+данные. В проекте пароль остаётся в bcrypt-хеше в БД; role middleware читает
+актуальную роль из БД.
+
+
+18. КАК ПРОСЛЕДИТЬ POST ОТ НАЖАТИЯ ДО БАЗЫ
+
+Пример, если преподаватель спросит «куда реально записался плейлист?»:
+
+1) Пользователь заполняет React форму.
+2) onChange вызывают updateForm, которая обновляет form state.
+3) Нажатие submit вызывает submitForm.
+4) submitForm собирает playlistData.
+5) React немедленно добавляет временную карточку; это только локальный state.
+6) createPlaylist в api.js вызывает `api.post('/playlists', playlistData)`.
+7) Axios прикрепляет Bearer токен.
+8) Vite proxy меняет `/api/playlists` на `/playlists` и пересылает на
+   `http://localhost:3000`.
+9) Express находит POST `/playlists`.
+10) authenticate проверяет JWT и достаёт пользователя из таблицы users.
+11) isAdmin разрешает запрос только role=admin.
+12) controller проверяет тело и вызывает playlistModel.create.
+13) Playlist.create выполняет INSERT в PostgreSQL.
+14) Controller отвечает HTTP 201 с созданным объектом.
+15) Axios кладёт JSON в response.data.
+16) API-функция возвращает response.data.data в App.
+17) App заменяет временный объект реальным ответом с DB ID.
+18) Если сервер вернул отказ/ошибку, catch удаляет временный объект и показывает
+    сообщение. Не считать оптимистическую карточку подтверждённой записью.
+
+
+19. ПРОВЕРКА И ТИПОВЫЕ ОШИБКИ
+
+Сервер:
+из корня проекта запустить `npm.cmd run dev`.
+Ожидается строка `Server running on http://localhost:3000`.
+Если `EADDRINUSE`, порт уже занимает другой процесс/экземпляр сервера:
+остановить старый сервер в его терминале Ctrl+C; не запускать PostgreSQL
+повторно и не завершать случайный системный процесс.
+
+Клиент:
+из корня проекта открыть второй терминал и выполнить
+`npm.cmd --prefix client run dev`.
+Vite покажет адрес, обычно http://localhost:5173.
+
+Проверки:
+
+GET /playlists без токена должен вернуть 200 и data array.
+GET /profile без токена должен вернуть 401.
+POST/PUT/DELETE без токена — 401.
+POST/PUT/DELETE под role=user — 403.
+POST/PUT/DELETE под role=admin — успешные статусы при корректном теле.
+
+Плейлист не сохранился:
+проверить, что вошёл admin, token не просрочен, сервер запущен, Network показывает
+ответ POST, а поля title и owner заполнены. Статус 403 означает недостаточные
+права, 401 — проблема токена, 400 — неверное тело, 500 — ошибка сервера/БД.
+
+401 и 403 — разные ошибки:
+401 — сервер не смог аутентифицировать пользователя.
+403 — пользователь распознан, но ему не разрешено это действие.
+
+Состояние «не найдено» отличается от ошибки:
+пустой успешный массив показывает «Плейлистов пока нет»; HTTP/сетевой отказ
+показывает блок ошибки и кнопку повтора.
+
+
+20. ВОПРОСЫ ПРЕПОДАВАТЕЛЯ И КОРОТКИЕ ОТВЕТЫ
+
+В: Где объявлена функция getPlaylists?
+О: В client/src/api.js. Она вызывает Axios GET /playlists и возвращает
+response.data.data.
+
+В: Откуда берётся URL?
+О: Сервис использует `import.meta.env.VITE_API_URL` либо `/api`; Vite proxy
+направляет `/api` на Express по VITE_SERVER_URL или localhost:3000.
+
+В: Где хранится список?
+О: В React state `playlists` в App.jsx. Источник данных — GET ответ сервера;
+постоянное хранилище — таблица PostgreSQL playlists.
+
+В: Что означает `setPlaylists`?
+О: React setter, который обновляет состояние и просит React повторно отрисовать
+компонент. Он не делает SQL-запрос и не сохраняет данные в БД.
+
+В: Откуда берётся ID нового элемента?
+О: До ответа сервера временный строковый ID создаёт createTemporaryId.
+После успешного POST используется числовой autoIncrement ID, который сервер
+получил из PostgreSQL и вернул в response.data.data.
+
+В: Почему данные могут появиться, но не сохраниться?
+О: Временная optimistic карточка отображается ещё до подтверждения сервера.
+Нужно дождаться успешного ответа 201. При ошибке карточка откатывается.
+
+В: Кто проверяет admin?
+О: Серверные middleware authenticate и isAdmin в routes/playlistRoutes.js.
+Скрытие/показ кнопок в браузере не является защитой.
+
+В: Можно ли зарегистрироваться сразу как admin?
+О: Нет. Серверный authController.register явно создаёт роль user.
+Надёжное назначение admin — доверенная операция в PostgreSQL.
+
+В: Что делает JSON middleware Express?
+О: `express.json()` разбирает JSON тела запроса и помещает объект в req.body.
+
+В: Зачем `try/catch`?
+О: Чтобы обработать отклонённый Promise. На клиенте показать ошибку и откатить
+изменение; на сервере передать ошибку следующему Express error handler.
+
+В: Что делает `finally`?
+О: Выполняется после успеха и ошибки. В CRUD он снимает флаг isMutating.
+
+В: Почему используется functional setter `setState(old => ...)`?
+О: Чтобы обновлять на основе самого актуального предыдущего состояния, особенно
+когда обновление зависит от предыдущего списка.
+
+В: Почему нельзя сортировать `playlists` напрямую?
+О: Массив является частью React state. Изменение его на месте может привести
+к незаметным побочным эффектам; `[...filtered].sort(...)` создаёт копию.
+
+В: Что делает AbortController?
+О: Отправляет сигнал отмены Axios GET при cleanup useEffect; это дополнительное
+улучшение лабораторной.
+
+В: В чём разница localStorage и React state?
+О: React state живёт пока компонент запущен и управляет отображением.
+localStorage переживает перезагрузку страницы и хранит клиентский JWT.
+Плейлисты постоянны не в localStorage, а в PostgreSQL.
+
+
+21. ЧТО СКАЗАТЬ НА ЗАЩИТЕ (КОРОТКО)
+
+«React-компонент загружает плейлисты через Axios из GET /playlists и отображает
+состояние загрузки или ошибку. Для CRUD я использую оптимистическое обновление:
+сначала обновляется React state, затем отправляется POST, PUT или DELETE.
+При успехе локальное состояние сверяется с ответом API, при ошибке откатывается.
+JWT получается при login, хранится в localStorage и добавляется interceptor
+в Authorization Bearer. Express проверяет JWT и роль admin middleware, затем
+controller вызывает Sequelize, который сохраняет запись в PostgreSQL.
+Дополнительное улучшение — отмена GET-запросов при cleanup useEffect через
+AbortController.»
+
+Ссылки на связанные материалы:
+LAB5_GUIDE.md — подробная инструкция запуска и выполнения лабораторной.
+LAB5_SCREENSHOT_GUIDE.md — как сделать каждый скриншот.
+LAB5_REPORT.txt — шаблон отчёта.
