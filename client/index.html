@@ -6,9 +6,40 @@
     <meta name="theme-color" content="#f7f8f5" />
     <meta name="description" content="Управление музыкальными плейлистами через REST API" />
     <title>Плейлисты | STPP</title>
+    <style>
+      .startup-loading {
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        color: #526354;
+        font: 14px 'Segoe UI', sans-serif;
+      }
+
+      .startup-spinner {
+        width: 18px;
+        height: 18px;
+        border: 2px solid #dfe7dc;
+        border-top-color: #315b47;
+        border-radius: 50%;
+        animation: startup-spin 700ms linear infinite;
+      }
+
+      @keyframes startup-spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div class="startup-loading" role="status">
+        <span class="startup-spinner" aria-hidden="true"></span>
+        Загружаем приложение…
+      </div>
+    </div>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>
