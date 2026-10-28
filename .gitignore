@@ -2,6 +2,7 @@ node_modules/
 npm-debug.log*
 .env
 .env.*
+!client/.env.example
 .DS_Store
 *.log
 .idea/

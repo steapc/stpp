@@ -1,4 +1,5 @@
 const express = require('express');
+const cors = require('cors');
 const playlistRoutes = require('./routes/playlistRoutes');
 const authRoutes = require('./routes/authRoutes');
 const authController = require('./controllers/authController');
@@ -10,6 +11,20 @@ const app = express();
 const port = process.env.PORT || 3000;
 
 app.use(express.json());
+
+const allowedOrigins = (process.env.CLIENT_ORIGIN ||
+  'http://localhost:5173,http://127.0.0.1:5173')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
+app.use(cors({
+  origin(origin, callback) {
+    callback(null, !origin || allowedOrigins.includes(origin));
+  },
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
 
 app.get('/', (req, res) => {
   res.status(200).json({
