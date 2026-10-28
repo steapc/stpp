@@ -576,7 +576,10 @@ function App() {
           )}
 
           {isLoading ? (
-            <p className="empty-state" role="status">Загружаем плейлисты с сервера…</p>
+            <p className="empty-state loading-state" role="status">
+              <span className="loading-spinner" aria-hidden="true" />
+              Загружаем плейлисты с сервера…
+            </p>
           ) : loadError ? (
             <div className="empty-state error-state" role="alert">
               <span className="empty-icon">!</span>

@@ -208,6 +208,28 @@
   overflow-wrap: anywhere;
 }
 
+.loading-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+
+.loading-spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid #dfe7dc;
+  border-top-color: var(--green);
+  border-radius: 50%;
+  animation: loading-spin 700ms linear infinite;
+}
+
+@keyframes loading-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .checkbox-label {
   display: flex;
   align-items: center;
