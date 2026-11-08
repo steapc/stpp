@@ -3,6 +3,7 @@ npm-debug.log*
 .env
 .env.*
 !client/.env.example
+!mongodb/.env.example
 .DS_Store
 *.log
 .idea/
