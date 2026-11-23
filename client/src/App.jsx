@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { io } from 'socket.io-client'
 import {
   createPlaylist,
   deletePlaylist,
@@ -75,6 +76,14 @@ function App() {
   const [authMode, setAuthMode] = useState('login')
   const [loginFields, setLoginFields] = useState({ email: '', password: '' })
   const [form, setForm] = useState(createEmptyForm())
+  const socketRef = useRef(null)
+  const [realtimeConnected, setRealtimeConnected] = useState(false)
+  const [activeRoomId, setActiveRoomId] = useState('')
+  const [roomParticipants, setRoomParticipants] = useState([])
+  const [roomMessages, setRoomMessages] = useState([])
+  const [playbackState, setPlaybackState] = useState(null)
+  const [chatText, setChatText] = useState('')
+  const [typingName, setTypingName] = useState('')
 
   useEffect(() => {
     const controller = new AbortController()
@@ -145,6 +154,49 @@ function App() {
   useEffect(() => {
     document.title = `Плейлисты (${playlists.length}) | STPP`
   }, [playlists.length])
+
+  useEffect(() => {
+    const realtimeSocket = io(
+      import.meta.env.VITE_SOCKET_URL || 'http://localhost:3000',
+      {
+        transports: ['websocket', 'polling'],
+      },
+    )
+
+    const handleConnect = () => setRealtimeConnected(true)
+    const handleDisconnect = () => setRealtimeConnected(false)
+    const handleHistory = (history) => setRoomMessages(history)
+    const handleChat = (message) => {
+      setRoomMessages((current) => [...current, message])
+    }
+    const handleParticipants = ({ participants }) => {
+      setRoomParticipants(participants || [])
+    }
+    const handlePlayback = (state) => setPlaybackState(state)
+    const handleTyping = ({ name, isTyping }) => {
+      setTypingName(isTyping ? name : '')
+    }
+
+    realtimeSocket.on('connect', handleConnect)
+    realtimeSocket.on('disconnect', handleDisconnect)
+    realtimeSocket.on('room-history', handleHistory)
+    realtimeSocket.on('chat-message', handleChat)
+    realtimeSocket.on('room-participants', handleParticipants)
+    realtimeSocket.on('playback-state', handlePlayback)
+    realtimeSocket.on('typing', handleTyping)
+    realtimeSocket.on('participant-joined', ({ name }) => {
+      setActionMessage(`${name} подключился к комнате плейлиста.`)
+    })
+    realtimeSocket.on('participant-left', ({ name }) => {
+      setActionMessage(`${name} отключился от комнаты плейлиста.`)
+    })
+    socketRef.current = realtimeSocket
+
+    return () => {
+      realtimeSocket.disconnect()
+      socketRef.current = null
+    }
+  }, [])
 
   const visiblePlaylists = useMemo(() => {
     const normalizedQuery = query.trim().toLocaleLowerCase('ru')
@@ -264,6 +316,75 @@ function App() {
     setIsLoading(true)
     setLoadError('')
     setLoadVersion((version) => version + 1)
+  }
+
+  function joinRoom(playlist) {
+    if (!socketRef.current) {
+      setActionMessage('Socket.IO-соединение ещё не установлено.')
+      return
+    }
+
+    socketRef.current.emit('join-room', {
+      roomId: String(playlist.id),
+      userName: user?.email || 'Гость',
+    }, (result) => {
+      if (!result?.ok) {
+        setActionMessage(result?.error || 'Не удалось войти в комнату.')
+        return
+      }
+      setActiveRoomId(String(playlist.id))
+      setPlaybackState(null)
+      setRoomMessages([])
+      setActionMessage(`Вы вошли в комнату «${playlist.title}».`)
+    })
+  }
+
+  function leaveRoom() {
+    if (!socketRef.current || !activeRoomId) {
+      return
+    }
+    socketRef.current.emit('leave-room', { roomId: activeRoomId })
+    setActiveRoomId('')
+    setRoomParticipants([])
+    setPlaybackState(null)
+    setActionMessage('Вы вышли из комнаты плейлиста.')
+  }
+
+  function sendChatMessage(event) {
+    event.preventDefault()
+    const text = chatText.trim()
+    if (!socketRef.current || !activeRoomId || !text) {
+      return
+    }
+    socketRef.current.emit('chat-message', { text }, (result) => {
+      if (!result?.ok) {
+        setActionMessage(result?.error || 'Не удалось отправить сообщение.')
+      }
+    })
+    setChatText('')
+  }
+
+  function sendTyping(isTyping) {
+    if (!socketRef.current || !activeRoomId) {
+      return
+    }
+    socketRef.current.emit('typing', { isTyping })
+  }
+
+  function sendPlayback(action, trackId = '', position = 0) {
+    if (!socketRef.current || !activeRoomId) {
+      setActionMessage('Сначала войдите в комнату плейлиста.')
+      return
+    }
+    socketRef.current.emit('playback-state', {
+      action,
+      trackId,
+      position,
+    }, (result) => {
+      if (!result?.ok) {
+        setActionMessage(result?.error || 'Не удалось синхронизировать воспроизведение.')
+      }
+    })
   }
 
   async function submitForm(event) {
@@ -637,6 +758,16 @@ function App() {
                     )}
                     <div className="card-actions">
                       <button
+                        className="text-button realtime-button"
+                        type="button"
+                        disabled={activeRoomId === String(playlist.id)}
+                        onClick={() => joinRoom(playlist)}
+                      >
+                        {activeRoomId === String(playlist.id)
+                          ? 'Вы в комнате'
+                          : 'Войти в комнату'}
+                      </button>
+                      <button
                         className="text-button"
                         type="button"
                         disabled={isMutating}
@@ -658,6 +789,84 @@ function App() {
                 </article>
               ))}
             </div>
+          )}
+
+          {activeRoomId && (
+            <section className="realtime-panel" aria-label="Real-time-комната плейлиста">
+              <div className="realtime-heading">
+                <div>
+                  <p className="eyebrow">REAL-TIME КОМНАТА</p>
+                  <h3>Плейлист #{activeRoomId}</h3>
+                </div>
+                <span className={realtimeConnected ? 'realtime-status online' : 'realtime-status'}>
+                  {realtimeConnected ? 'Подключено' : 'Отключено'}
+                </span>
+              </div>
+
+              <div className="realtime-presence">
+                <strong>Участники: {roomParticipants.length}</strong>
+                {roomParticipants.map((participant) => (
+                  <span className="participant-chip" key={participant.id}>
+                    {participant.name}
+                  </span>
+                ))}
+              </div>
+
+              <div className="playback-controls">
+                <button type="button" onClick={() => sendPlayback('play', playbackState?.trackId || '')}>
+                  ▶ Play
+                </button>
+                <button type="button" onClick={() => sendPlayback('pause', playbackState?.trackId || '', playbackState?.position || 0)}>
+                  ❚❚ Pause
+                </button>
+                <button type="button" onClick={() => sendPlayback('seek', playbackState?.trackId || '', 30)}>
+                  Seek 00:30
+                </button>
+              </div>
+
+              {playbackState && (
+                <p className="playback-status">
+                  Состояние: <strong>{playbackState.action}</strong>
+                  {playbackState.trackId ? `, трек ${playbackState.trackId}` : ''}
+                  {playbackState.position ? `, позиция ${Math.round(playbackState.position)} сек.` : ''}
+                  {' — '}
+                  {playbackState.changedBy}
+                </p>
+              )}
+
+              <div className="room-messages" aria-live="polite">
+                {roomMessages.map((message) => (
+                  <div className="room-message" key={message._id || message.id}>
+                    <strong>{message.userName || 'Участник'}:</strong>{' '}
+                    {message.type === 'chat' ? message.text : `состояние воспроизведения — ${message.playback?.action || 'обновлено'}`}
+                  </div>
+                ))}
+                {typingName && (
+                  <p className="typing-status">{typingName} печатает…</p>
+                )}
+              </div>
+
+              <form className="room-chat" onSubmit={sendChatMessage}>
+                <input
+                  aria-label="Сообщение в комнату"
+                  value={chatText}
+                  onChange={(event) => {
+                    setChatText(event.target.value)
+                    sendTyping(Boolean(event.target.value))
+                  }}
+                  onBlur={() => sendTyping(false)}
+                  placeholder="Сообщение для комнаты..."
+                  maxLength="1000"
+                />
+                <button type="submit" disabled={!chatText.trim()}>
+                  Отправить
+                </button>
+              </form>
+
+              <button className="leave-room-button" type="button" onClick={leaveRoom}>
+                Выйти из комнаты
+              </button>
+            </section>
           )}
         </div>
 
