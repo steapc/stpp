@@ -328,6 +328,7 @@ function App() {
       return
     }
 
+    setRoomMessages([])
     socketRef.current.emit('join-room', {
       roomId: String(playlist.id),
       userName: user?.email || 'Гость',
@@ -338,7 +339,6 @@ function App() {
       }
       setActiveRoomId(String(playlist.id))
       setPlaybackState(null)
-      setRoomMessages([])
       setActionMessage(`Вы вошли в комнату «${playlist.title}».`)
     })
   }
