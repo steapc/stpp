@@ -169,6 +169,9 @@ function App() {
     const handleChat = (message) => {
       setRoomMessages((current) => [...current, message])
     }
+    const handleRoomNotice = (notice) => {
+      setRoomMessages((current) => [...current, notice])
+    }
     const handleParticipants = ({ participants }) => {
       setRoomParticipants(participants || [])
     }
@@ -181,6 +184,7 @@ function App() {
     realtimeSocket.on('disconnect', handleDisconnect)
     realtimeSocket.on('room-history', handleHistory)
     realtimeSocket.on('chat-message', handleChat)
+    realtimeSocket.on('room-notice', handleRoomNotice)
     realtimeSocket.on('room-participants', handleParticipants)
     realtimeSocket.on('playback-state', handlePlayback)
     realtimeSocket.on('typing', handleTyping)
@@ -836,9 +840,20 @@ function App() {
 
               <div className="room-messages" aria-live="polite">
                 {roomMessages.map((message) => (
-                  <div className="room-message" key={message._id || message.id}>
-                    <strong>{message.userName || 'Участник'}:</strong>{' '}
-                    {message.type === 'chat' ? message.text : `состояние воспроизведения — ${message.playback?.action || 'обновлено'}`}
+                  <div
+                    className={`room-message${message.type === 'join' || message.type === 'leave' ? ' system-room-message' : ''}`}
+                    key={message._id || message.id}
+                  >
+                    {message.type === 'join' || message.type === 'leave'
+                      ? message.text
+                      : (
+                        <>
+                          <strong>{message.userName || 'Участник'}:</strong>{' '}
+                          {message.type === 'chat'
+                            ? message.text
+                            : `состояние воспроизведения — ${message.playback?.action || 'обновлено'}`}
+                        </>
+                      )}
                   </div>
                 ))}
                 {typingName && (

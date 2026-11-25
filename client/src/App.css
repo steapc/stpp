@@ -280,6 +280,12 @@
   font-size: 11px;
 }
 
+.system-room-message {
+  color: #7a847b;
+  font-size: 10px;
+  font-style: italic;
+}
+
 .typing-status {
   color: #8a7463;
   font-size: 10px;

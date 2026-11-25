@@ -79,22 +79,39 @@ function cleanName(value) {
 
 async function saveRoomEvent(event) {
   if (mongoose.connection.readyState !== 1) {
-    return;
+    return null;
   }
 
   try {
-    await RoomEvent.create(event);
+    return await RoomEvent.create(event);
   } catch (error) {
     console.error('Room event history save failed:', error.message);
+    return null;
   }
 }
 
-async function roomPresence(roomId) {
+async function publishRoomNotice(roomId, type, userName) {
+  const action = type === 'join' ? 'вошёл в комнату' : 'вышел из комнаты';
+  const event = {
+    roomId,
+    type,
+    userName,
+    text: `${userName} ${action}.`,
+    createdAt: new Date(),
+  };
+  const savedEvent = await saveRoomEvent(event);
+  io.to(roomId).emit('room-notice', {
+    ...event,
+    id: savedEvent?._id?.toString() || `${Date.now()}-${type}-${userName}`,
+    createdAt: event.createdAt.toISOString(),
+  });
+}
+
+async function roomPresence(roomId, excludedSocketId) {
   const sockets = await io.in(roomId).fetchSockets();
-  return sockets.map((socket) => ({
-    id: socket.id,
-    name: socket.data.userName,
-  }));
+  return sockets
+    .filter((socket) => socket.id !== excludedSocketId)
+    .map((socket) => ({ id: socket.id, name: socket.data.userName }));
 }
 
 io.on('connection', (socket) => {
@@ -113,11 +130,17 @@ io.on('connection', (socket) => {
     }
 
     if (socket.data.roomId && socket.data.roomId !== roomId) {
-      await socket.leave(socket.data.roomId);
-      io.to(socket.data.roomId).emit('participant-left', {
-        roomId: socket.data.roomId,
+      const previousRoomId = socket.data.roomId;
+      await socket.leave(previousRoomId);
+      io.to(previousRoomId).emit('participant-left', {
+        roomId: previousRoomId,
         name: socket.data.userName,
       });
+      io.to(previousRoomId).emit('room-participants', {
+        roomId: previousRoomId,
+        participants: await roomPresence(previousRoomId),
+      });
+      await publishRoomNotice(previousRoomId, 'leave', socket.data.userName);
     }
 
     socket.data.roomId = roomId;
@@ -126,11 +149,6 @@ io.on('connection', (socket) => {
 
     const participants = await roomPresence(roomId);
     io.to(roomId).emit('room-participants', { roomId, participants });
-    io.to(roomId).emit('participant-joined', {
-      roomId,
-      name: socket.data.userName,
-    });
-
     socket.emit('room-state', roomState.get(roomId) || null);
 
     if (mongoose.connection.readyState === 1) {
@@ -142,6 +160,12 @@ io.on('connection', (socket) => {
     } else {
       socket.emit('room-history', []);
     }
+
+    await publishRoomNotice(roomId, 'join', socket.data.userName);
+    io.to(roomId).emit('participant-joined', {
+      roomId,
+      name: socket.data.userName,
+    });
 
     if (typeof acknowledge === 'function') {
       acknowledge({ ok: true, roomId });
@@ -160,6 +184,7 @@ io.on('connection', (socket) => {
     if (socket.data.roomId === roomId) {
       socket.data.roomId = null;
     }
+    await publishRoomNotice(roomId, 'leave', socket.data.userName);
     io.to(roomId).emit('participant-left', {
       roomId,
       name: socket.data.userName,
@@ -257,13 +282,14 @@ io.on('connection', (socket) => {
     if (!roomId) {
       return;
     }
+    await publishRoomNotice(roomId, 'leave', socket.data.userName);
     io.to(roomId).emit('participant-left', {
       roomId,
       name: socket.data.userName,
     });
     io.to(roomId).emit('room-participants', {
       roomId,
-      participants: await roomPresence(roomId),
+      participants: await roomPresence(roomId, socket.id),
     });
   });
 });
